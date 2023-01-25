@@ -119,7 +119,7 @@ export async function register(req, resp) {
       user
         .save()
         .then(() => {
-          resp.status(201).send({ message: "user save succesfully" });
+          resp.status(201).send({ msg: "user save succesfully" });
           return;
         })
         .catch((error) => {
@@ -211,14 +211,47 @@ export async function generateOTP(req, resp) {
     upperCaseAlphabets: false,
     specialChars: false,
   });
-  resp.send({ OTP });
+  resp.status(201).send({ code: req?.app?.locals?.OTP });
 }
 export async function verifyOTP(req, resp) {
-  resp.status(201).json({ message: "verify OTP" });
+  let { code } = req.query;
+  if (parseInt(req.app.locals.OTP) === parseInt(code)) {
+    req.app.locals.OTP = null;
+    req.app.locals.resetSession = true;
+    return resp.status(201).send({ msg: "OTP verified Successfully" });
+  }
+  return resp.status(401).send({ error: "Invalid OTP!" });
 }
 export async function createResetSession(req, resp) {
-  resp.status(201).json({ message: "createResetSession" });
+  if (req.app.locals.resetSession) {
+    req.app.locals.resetSession = false;
+    return resp.status(200).send({ msg: "Access granted" });
+  }
+  return resp.status(403).send({ error: "Session Expired" });
 }
 export async function resetPassword(req, resp) {
-  resp.status(201).json({ message: "resetPassword" });
+  try {
+    if (!req.app.locals.resetSession)
+      return resp.status(403).send({ error: "Session Expired" });
+
+    let { username, password } = req.body;
+    let user = await UserModel.findOne({ username });
+    if (user) {
+      let hashedPassword = await bcrypt.hash(password, 10);
+      let updatedUser = await UserModel.updateOne(
+        { username: user.username },
+        { $set: { password: hashedPassword } }
+      );
+      if (updatedUser?.modifiedCount > 0) {
+        req.app.locals.resetSession = false;
+        return resp.status(201).send({ msg: "Password reset Successfully" });
+      } else {
+        return resp.status(401).send({ error: "Data is already same" });
+      }
+    } else {
+      return resp.status(404).send({ error: "User Not Found" });
+    }
+  } catch (error) {
+    return resp.status(500).send({ error: error.message });
+  }
 }
