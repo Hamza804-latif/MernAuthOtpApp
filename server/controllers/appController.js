@@ -1,7 +1,54 @@
 import UserModel from "../models/User.model.js";
 import bcrypt from "bcrypt";
-import mongoose from "mongoose";
+import jwt from "jsonwebtoken";
+import secret from "../config.js";
+import OTPGenerator from "otp-generator";
 
+//middlewares
+
+export async function verifyToken(req, resp, next) {
+  let token = req?.headers?.authorization?.split(" ")[1];
+  if (token) {
+    try {
+      jwt.verify(token, secret.secretkey, (err, token) => {
+        if (err) resp.send({ error: "token is not valid" });
+        else {
+          req.user = token?.userId;
+          next();
+        }
+      });
+    } catch (error) {
+      resp.status(500).send({ error: error.message });
+    }
+  } else {
+    resp.status(401).send({ error: "please send valid token" });
+  }
+}
+
+export async function verifyUser(req, resp, next) {
+  try {
+    let { username } = req.method == "GET" ? req.query : req.body;
+    let exist = await UserModel.findOne({ username });
+    if (!exist) {
+      resp.status(404).send({ error: "can't find user" });
+      return;
+    }
+    next();
+  } catch (error) {
+    resp.status(500).send({ error: error.message });
+    return;
+  }
+}
+
+export async function localVariables(req, resp, next) {
+  req.app.locals = {
+    OTP: null,
+    resetSession: false,
+  };
+  next();
+}
+
+//controllers
 export async function register(req, resp) {
   try {
     const { username, password, profile, email } = req.body;
@@ -73,9 +120,11 @@ export async function register(req, resp) {
         .save()
         .then(() => {
           resp.status(201).send({ message: "user save succesfully" });
+          return;
         })
         .catch((error) => {
           resp.status(500).send({ error: error.message });
+          return;
         });
     }
   } catch (error) {
@@ -84,19 +133,85 @@ export async function register(req, resp) {
 }
 
 export async function login(req, resp) {
-  resp.status(201).json({ message: "login" });
+  let { username, password } = req.body;
+  try {
+    let user = await UserModel.findOne({ username });
+    if (user) {
+      let passwordCheck = await bcrypt.compare(password, user.password);
+      if (!passwordCheck) {
+        resp.status(403).send({ error: "password does not match" });
+        return;
+      } else {
+        let token = jwt.sign(
+          { userId: user._id, username: user.username },
+          secret.secretkey,
+          {
+            expiresIn: "24h",
+          }
+        );
+        resp
+          .status(200)
+          .send({ msg: "login Successfull", username: user.username, token });
+        return;
+      }
+    } else {
+      resp.status(403).send({ error: "username or Password is incorrect" });
+      return;
+    }
+  } catch (error) {
+    resp.status(500).send({ error: error.message });
+    return;
+  }
 }
 
 export async function getUser(req, resp) {
-  resp.status(201).json({ message: "get user" });
+  let { username } = req.params;
+
+  try {
+    let user = await UserModel.findOne({ username }).select("-password");
+    if (user) {
+      resp.status(200).send(user);
+      return;
+    } else {
+      resp.status(404).send({ error: "can't find user" });
+    }
+  } catch (error) {
+    resp.status(500).send({ error: error.message });
+    return;
+  }
 }
 
 export async function updateUser(req, resp) {
-  resp.status(201).json({ message: "update user" });
+  let id = req?.user;
+
+  if (id) {
+    console.log(id);
+    let body = req.body;
+    console.log(body);
+    try {
+      let updatedUser = await UserModel.updateOne({ _id: id }, { $set: body });
+      if (updatedUser?.modifiedCount > 0) {
+        resp.status(201).send({ message: "User updated successfully" });
+        return;
+      } else {
+        resp.status(200).send({ message: "data is already same" });
+        return;
+      }
+    } catch (error) {
+      resp.status(500).send({ error: error.message });
+    }
+  } else {
+    resp.status(401).send({ error: "please send user id" });
+  }
 }
 
 export async function generateOTP(req, resp) {
-  resp.status(201).json({ message: "generate OTP" });
+  req.app.locals.OTP = await OTPGenerator.generate(6, {
+    lowerCaseAlphabets: false,
+    upperCaseAlphabets: false,
+    specialChars: false,
+  });
+  resp.send({ OTP });
 }
 export async function verifyOTP(req, resp) {
   resp.status(201).json({ message: "verify OTP" });
